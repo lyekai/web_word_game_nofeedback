@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0"> -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>簡單模式：單字解謎（實驗控制組：固定罐頭回饋）</title>
+    <title>簡單模式：單字解謎</title>
     <link rel="stylesheet" href="static/css/easy_mode.css">
 </head>
 
@@ -171,68 +171,81 @@
             typing();
         }
 
-        // AI 生圖：向同網域的 Vercel API 要求圖片資料，API Key 不會暴露在前端。
+        // ==========================================
+        // 完整保留你原本的純前端 AI 繪圖產生器（帶失敗替代圖片）
+        // ==========================================
         async function generateFrontendImage(promptText) {
-            const response = await fetch("/api/generate-image", {
+            const encodedPrompt = encodeURIComponent(`children storybook style illustration, ${promptText}, vivid colors, cute, clean lines`);
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true`;
+            const fallbackImage = "static/image/default_ai.png"; // 備用圖片路徑
+
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.src = imageUrl;
+                img.onload = () => resolve(imageUrl);
+                img.onerror = () => {
+                    console.warn("Pollinations.ai 請求失敗，切換至備用圖片");
+                    const levelData = levelDataCache.find(item => Number(item.level) === Number(currentLevel));
+                    resolve(levelData ? levelData.image_origin : fallbackImage);
+                };
+            });
+        }
+
+        // Gemini API 函式保留（雖然實驗組不會呼叫它，但維持原狀不破壞其他關卡或程式結構）
+        async function fetchGeminiAnalysis(userSentence, correctSelected, wrongSelected, missingWords, targetAnswers, sentencePrompt, roundIndex) {
+            const requestBody = {
+                userSentence,
+                correctSelected,
+                wrongSelected,
+                missingWords,
+                targetAnswers,
+                sentencePrompt,
+                roundIndex
+            };
+
+            const response = await fetch("/api/gemini", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ promptText })
+                body: JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
-                let errorMessage = `圖片生成失敗（HTTP ${response.status}）`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.details || errorData.error || errorMessage;
-                    console.error("Pollinations 生圖 API 錯誤：", errorData);
-                } catch (_) {}
-                throw new Error(errorMessage);
+                throw new Error(`Serverless API 回應異常: ${response.status}`);
             }
 
-            const contentType = response.headers.get("content-type") || "";
-            if (!contentType.toLowerCase().startsWith("image/")) {
-                throw new Error(`後端回應不是圖片（${contentType || "未知 Content-Type"}）`);
+            const data = await response.json();
+            return data.result;
+        }
+
+        // API 請求失敗時觸發的本地罐頭診斷引擎 (Fallback)
+        function generatePureFrontendFeedback(sentence, missingWords, userWords) {
+            let feedback = "🤖 AI 老師學習與診斷建議：\n\n";
+            const s = sentence.trim();
+
+            if (missingWords.length > 0) {
+                feedback += `1. 單字提示：有部分目標單字尚未答對或填入哦！請再次檢查圖片細節。\n`;
+            } else {
+                feedback += `1. 單字提示：太棒了！三個圖片目標單字都有正確選擇與應用！\n`;
             }
 
-            const imageBlob = await response.blob();
-            if (!imageBlob.size) {
-                throw new Error("API 回傳的圖片內容是空的");
+            let grammarIssues = [];
+            if (!/^[A-Z]/.test(s)) grammarIssues.push("句首字母記得要大寫");
+            if (!/[.!?]$/.test(s)) grammarIssues.push("句尾記得加上標點符號 (.)");
+            
+            if (grammarIssues.length > 0) {
+                feedback += `2. 文法修正：${grammarIssues.join("；")}。\n`;
+            } else {
+                feedback += `2. 文法修正：大小寫與句尾標點符號非常標準！\n`;
             }
 
-            const objectUrl = URL.createObjectURL(imageBlob);
-            let portfolioImage = objectUrl;
-
-            try {
-                portfolioImage = await new Promise((resolve, reject) => {
-                    const image = new Image();
-                    image.onload = () => {
-                        try {
-                            const canvas = document.createElement("canvas");
-                            canvas.width = 512;
-                            canvas.height = 512;
-                            const context = canvas.getContext("2d");
-                            context.fillStyle = "#ffffff";
-                            context.fillRect(0, 0, canvas.width, canvas.height);
-
-                            const scale = Math.min(512 / image.naturalWidth, 512 / image.naturalHeight);
-                            const width = Math.round(image.naturalWidth * scale);
-                            const height = Math.round(image.naturalHeight * scale);
-                            const x = Math.round((512 - width) / 2);
-                            const y = Math.round((512 - height) / 2);
-                            context.drawImage(image, x, y, width, height);
-                            resolve(canvas.toDataURL("image/jpeg", 0.78));
-                        } catch (error) {
-                            reject(error);
-                        }
-                    };
-                    image.onerror = () => reject(new Error("無法讀取生成的圖片"));
-                    image.src = objectUrl;
-                });
-            } catch (error) {
-                console.warn("作品集圖片壓縮失敗，暫用當前圖片網址：", error);
+            const wordCount = s.split(/\s+/).filter(w => w.length > 0).length;
+            if (wordCount < 6) {
+                feedback += `3. 畫面引導建議：試著加入一些形容詞（如 big, cute, happy）來豐富句子內容，讓畫面更生動！\n`;
+            } else {
+                feedback += `3. 畫面引導建議：句子非常有豐富度，表現非常優異！\n`;
             }
 
-            return { objectUrl, portfolioImage };
+            return feedback;
         }
 
         async function showModal() {
@@ -259,14 +272,14 @@
             handleFinalSave();
 
             try {
-                const generatedImage = await generateFrontendImage(userSentence);
-                aiImg.src = generatedImage.objectUrl;
+                const generatedUrl = await generateFrontendImage(userSentence);
+                aiImg.src = generatedUrl;
                 loading.classList.add("hidden");
                 aiImg.classList.remove("hidden");
-                footer.style.display = "flex";
-
+                footer.style.display = "flex"; 
+                
                 saveToPortfolio({
-                    image: generatedImage.portfolioImage,
+                    image: generatedUrl, 
                     mode: '簡單模式',
                     level: currentLevel,
                     sentence: userSentence,
@@ -275,9 +288,7 @@
                     time: new Date().toLocaleString('zh-TW', { hour12: false })
                 });
             } catch (e) {
-                console.error("AI 生圖失敗：", e);
-                loading.textContent = `圖片生成失敗：${e.message || "請稍後再試"}。過關紀錄不受影響。`;
-                aiImg.classList.add("hidden");
+                loading.textContent = "生圖功能暫時休息，不影響過關，請點擊下一關。";
                 footer.style.display = "flex";
             }
         }
@@ -418,7 +429,7 @@
         }
 
         // ==========================================
-        // 實驗控制組：不串接 API，回傳固定的罐頭回饋
+        // 實驗組修改：不串接 API，點擊確認後直接回傳固定的罐頭回饋
         // ==========================================
         async function handleConfirm() {
             const btn = document.querySelector(".confirm-btn");
@@ -430,7 +441,6 @@
             const userBoxes = [document.getElementById("answer1"), document.getElementById("answer2"), document.getElementById("answer3")];
             const selectedWords = userBoxes.map(b => b.textContent.trim().toLowerCase()).filter(w => w !== "");
 
-            // 依然計算星星（確保遊戲通關邏輯正常運作）
             evaluateSentenceStars(sentenceInput.value.trim(), selectedWords);
 
             if (feedbackCount >= 2) { 
@@ -439,28 +449,25 @@
             }
 
             btn.disabled = true;
-            document.getElementById("feedback-container").innerHTML = "系統正在處理您的句子...";
+            document.getElementById("feedback-container").innerHTML = "🤖 系統正在處理您的句子...";
 
-            // 模擬一點點延遲讓體驗更自然
-            setTimeout(() => {
-                // 固定罐頭回饋內容，包含：1. 單字提示、2. 文法修正、3. 句型豐富度建議
-                const fixedFeedback = 
-                    "1. 單字提示：請繼續留意圖片中的物件與細節線索。\n" +
-                    "2. 文法修正：請確保句子開頭大寫、句尾加上正確標點符號。\n" +
-                    "3. 畫面引導建議：可以嘗試加入更多形容詞來讓句子更完整。";
+            // 固定的罐頭回饋內容（包含單字提示、文法修正、畫面引導建議三區塊）
+            const fixedFeedback = 
+                "1. 單字提示：請繼續留意圖片中的物件與細節線索。\n" +
+                "2. 文法修正：請確保句子開頭大寫、句尾加上正確標點符號。\n" +
+                "3. 畫面引導建議：可以嘗試加入更多形容詞來讓句子更完整。";
 
-                typeEffect('feedback-container', fixedFeedback, 30, () => {
-                    feedbackCount++; 
-                    btn.disabled = false;
+            typeEffect('feedback-container', fixedFeedback, 30, () => {
+                feedbackCount++; 
+                btn.disabled = false;
 
-                    if (feedbackCount < 2) {
-                        btn.textContent = "再造一次";
-                    } else {
-                        btn.textContent = "生成圖片";
-                    }
-                    updateConfirmButton();
-                });
-            }, 500);
+                if (feedbackCount < 2) {
+                    btn.textContent = "再造一次";
+                } else {
+                    btn.textContent = "生成圖片";
+                }
+                updateConfirmButton();
+            });
         }
 
         window.addEventListener("DOMContentLoaded", () => {
@@ -587,12 +594,12 @@
                 localStorage.setItem('gameProgress', JSON.stringify(progressData));
             }
         }
-
         // 當手機鍵盤打開時，透過 JavaScript 滾動與鎖定高度，避免佈局被壓縮
         window.addEventListener("DOMContentLoaded", () => {
             const inputField = document.getElementById("sentence-input");
             if (inputField) {
                 inputField.addEventListener("focus", () => {
+                    // 輸入時自動將畫面平滑拉至輸入區域，避免被虛擬鍵盤推擠變形
                     setTimeout(() => {
                         inputField.scrollIntoView({ behavior: "smooth", block: "center" });
                     }, 300);
@@ -603,6 +610,7 @@
         // 切換全螢幕函式
         function toggleFullScreen() {
             if (!document.fullscreenElement) {
+                // 進入全螢幕並嘗試鎖定為橫屏 (支援的行動裝置會自動轉橫並隱藏網址列)
                 document.documentElement.requestFullscreen().then(() => {
                     if (screen.orientation && screen.orientation.lock) {
                         screen.orientation.lock('landscape').catch(err => {
@@ -619,11 +627,14 @@
             }
         }
 
+        // 選擇性：當使用者第一次點擊畫面時，自動幫他進入全螢幕（增加遊戲體驗）
         window.addEventListener('click', function initFullscreen() {
             if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {});
+                document.documentElement.requestFullscreen().catch(err => {
+                    // 瀏覽器通常要求必須由使用者互動（點擊）觸發，這裡捕捉例外避免報錯
+                });
             }
-        }, { once: true });
+        }, { once: true }); // 只觸發一次
     </script>
 </body>
 </html>
