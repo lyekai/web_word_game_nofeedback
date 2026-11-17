@@ -168,7 +168,7 @@
             typing();
         }
 
-        // 前端 AI 繪圖產生器 (經由 Vercel 後端安全帶入付費版 Key)
+        // 前端 AI 繪圖產生器 (完全保留你原本的實作)
         async function generateFrontendImage(promptText) {
             const response = await fetch("/api/generate-image", {
                 method: "POST",
@@ -230,6 +230,62 @@
             }
 
             return { objectUrl, portfolioImage };
+        }
+
+        // 保留原函式結構避免其他相依報錯
+        async function fetchGeminiAnalysis(userSentence, correctSelected, wrongSelected, missingWords, targetAnswers, sentencePrompt, roundIndex) {
+            const requestBody = {
+                userSentence,
+                correctSelected,
+                wrongSelected,
+                missingWords,
+                targetAnswers,
+                sentencePrompt,
+                roundIndex
+            };
+
+            const response = await fetch("/api/gemini", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Serverless API 回應異常: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.result;
+        }
+
+        function generatePureFrontendFeedback(sentence, missingWords, userWords) {
+            let feedback = "🤖 AI 老師學習與診斷建議：\n\n";
+            const s = sentence.trim();
+
+            if (missingWords.length > 0) {
+                feedback += `1. 單字提示：有部分目標單字尚未答對或填入哦！請再次檢查圖片細節。\n`;
+            } else {
+                feedback += `1. 單字提示：太棒了！三個圖片目標單字都有正確選擇與應用！\n`;
+            }
+
+            let grammarIssues = [];
+            if (!/^[A-Z]/.test(s)) grammarIssues.push("句首字母記得要大寫");
+            if (!/[.!?]$/.test(s)) grammarIssues.push("句尾記得加上標點符號 (.)");
+            
+            if (grammarIssues.length > 0) {
+                feedback += `2. 文法修正：${grammarIssues.join("；")}。\n`;
+            } else {
+                feedback += `2. 文法修正：大小寫與句尾標點符號非常標準！\n`;
+            }
+
+            const wordCount = s.split(/\s+/).filter(w => w.length > 0).length;
+            if (wordCount < 6) {
+                feedback += `3. 畫面引導建議：試著加入一些形容詞（如 big, cute, happy）來豐富句子內容，讓畫面更生動！\n`;
+            } else {
+                feedback += `3. 畫面引導建議：句子非常有豐富度，表現非常優異！\n`;
+            }
+
+            return feedback;
         }
 
         async function showModal() {
@@ -419,7 +475,7 @@
         }
 
         // ==========================================
-        // 實驗控制組：不串接 API，回傳固定的罐頭回饋
+        // 實驗控制組修改：不串接 API，改為固定的罐頭回饋
         // ==========================================
         async function handleConfirm() {
             const btn = document.querySelector(".confirm-btn");
@@ -442,9 +498,7 @@
             btn.disabled = true;
             document.getElementById("feedback-container").innerHTML = "系統正在處理您的句子...";
 
-            // 模擬一點點延遲讓體驗更自然
             setTimeout(() => {
-                // 固定罐頭回饋內容，包含：1. 單字提示、2. 文法修正、3. 句型豐富度建議
                 const fixedFeedback = 
                     "1. 單字提示：請繼續留意圖片中的物件與細節線索。\n" +
                     "2. 文法修正：請確保句子開頭大寫、句尾加上正確標點符號。\n" +
@@ -589,12 +643,12 @@
                 localStorage.setItem('gameProgress', JSON.stringify(progressData));
             }
         }
-        
         // 當手機鍵盤打開時，透過 JavaScript 滾動與鎖定高度，避免佈局被壓縮
         window.addEventListener("DOMContentLoaded", () => {
             const inputField = document.getElementById("sentence-input");
             if (inputField) {
                 inputField.addEventListener("focus", () => {
+                    // 輸入時自動將畫面平滑拉至輸入區域，避免被虛擬鍵盤推擠變形
                     setTimeout(() => {
                         inputField.scrollIntoView({ behavior: "smooth", block: "center" });
                     }, 300);
@@ -605,6 +659,7 @@
         // 切換全螢幕函式
         function toggleFullScreen() {
             if (!document.fullscreenElement) {
+                // 進入全螢幕並嘗試鎖定為橫屏 (支援的行動裝置會自動轉橫並隱藏網址列)
                 document.documentElement.requestFullscreen().then(() => {
                     if (screen.orientation && screen.orientation.lock) {
                         screen.orientation.lock('landscape').catch(err => {
@@ -621,11 +676,14 @@
             }
         }
 
+        // 選擇性：當使用者第一次點擊畫面時，自動幫他進入全螢幕（增加遊戲體驗）
         window.addEventListener('click', function initFullscreen() {
             if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {});
+                document.documentElement.requestFullscreen().catch(err => {
+                    // 瀏覽器通常要求必須由使用者互動（點擊）觸發，這裡捕捉例外避免報錯
+                });
             }
-        }, { once: true });
+        }, { once: true }); // 只觸發一次
     </script>
 </body>
 </html>
